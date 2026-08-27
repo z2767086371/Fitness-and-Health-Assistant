@@ -245,19 +245,39 @@
   ];
 
   // ---------- 社区动态 ----------
-  const community = [
+  const mockCommunity = [
     { id: 'p1', user: '阿杰', avatar: '🐯', time: '12分钟前', topic: '晨跑', text: '今天配速破 5分30秒了！间歇跑真的有用 💪', like: 28, comment: 6, liked: false, img: '🏞️' },
     { id: 'p2', user: 'Yoga_Lily', avatar: '🐰', time: '1小时前', topic: '瑜伽', text: '坚持 30 天瑜伽，体态改善超明显～分享今日体态对比', like: 64, comment: 12, liked: true, img: '🧘' },
     { id: 'p3', user: '老王', avatar: '🐻', time: '今天 07:20', topic: '减脂餐', text: '低卡鸡胸+西兰花，控卡第 18 天，继续冲！', like: 41, comment: 9, liked: false, img: '🥗' },
     { id: 'p4', user: '跑步菌', avatar: '🐧', time: '昨天', topic: '装备', text: '新鞋上脚第一跑，缓震绝了，推荐给进阶跑者', like: 88, comment: 23, liked: false, img: '👟' }
   ];
+  // 用户发布的动态在前，演示动态在后
+  function mergeCommunity(mock, user) {
+    const u = Array.isArray(user) ? user : [];
+    return [...u, ...mock];
+  }
+  let community = mergeCommunity(mockCommunity, userHealth.posts);
 
   // ---------- 虚拟宠物 ----------
-  const pet = {
+  function loadPet() {
+    try {
+      if (typeof localStorage === 'undefined') return null;
+      const raw = localStorage.getItem('sport_pet');
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
+  }
+  const pet = Object.assign({
     name: '元气狐', emoji: '🦊', energy: 76, level: 5,
+    exp: 0, expNext: 100,
     form: '活力',   // 瞌睡 / 普通 / 活力 / 闪耀
     lastFed: todayKey()
-  };
+  }, loadPet() || {});
+  function persistPet() {
+    try {
+      if (typeof localStorage === 'undefined') return;
+      localStorage.setItem('sport_pet', JSON.stringify(pet));
+    } catch (e) { /* 静默失败 */ }
+  }
 
   // ============================================================
   //  ★ 核心算法 ★
@@ -327,12 +347,20 @@
     return camps[level] || camps['5K'];
   }
 
-  // 4) 虚拟宠物能量规则
+  // 4) 虚拟宠物能量规则（能量 + 经验 + 升级，持久化）
   function petGain(action) {
-    const map = { workout10: 5, planDone: 20, streak: 10, challenge: 50 };
-    pet.energy = clamp(pet.energy + (map[action] || 0), 0, 100);
+    const map = { workout10: 5, planDone: 20, streak: 10, challenge: 50, feed: 25 };
+    const energyGain = map[action] || 0;
+    pet.energy = clamp(pet.energy + energyGain, 0, 100);
+    pet.exp = (pet.exp || 0) + energyGain;
+    while (pet.exp >= pet.expNext) {
+      pet.exp -= pet.expNext;
+      pet.level = (pet.level || 1) + 1;
+      pet.expNext = Math.round(pet.expNext * 1.5);
+    }
     updatePetForm();
-    return pet.energy;
+    persistPet();
+    return pet;
   }
   function updatePetForm() {
     if (pet.energy >= 90) pet.form = '闪耀';
@@ -382,6 +410,7 @@
     window.DB.workouts = workouts;
     window.DB.meals = meals;
     window.DB.waterCups = waterCups;
+    window.DB.community = community;
   }
 
   // 重算依赖个人档案的派生数据（如恢复评分，因其依赖 baseline）
@@ -472,6 +501,72 @@
     syncDB();
   }
 
+  // 用户经验值 + 升级（持久化到个人档案）
+  function gainExp(n) {
+    n = Math.max(0, Math.round(n || 0));
+    profile.exp = (profile.exp || 0) + n;
+    let leveledUp = false;
+    while (profile.exp >= profile.exp_next) {
+      profile.exp -= profile.exp_next;
+      profile.level_num += 1;
+      profile.exp_next = Math.round(profile.exp_next * 1.2);
+      leveledUp = true;
+    }
+    persistProfile();
+    return { exp: profile.exp, level: profile.level_num, expNext: profile.exp_next, leveledUp };
+  }
+
+  // 发布一条社区动态（用户自录）
+  function addPost(p) {
+    const text = (p.text || '').trim();
+    if (!text) return null;
+    const post = {
+      id: 'u' + new Date().getTime(),
+      user: profile.name || '我',
+      avatar: profile.avatar || '🙂',
+      time: '刚刚',
+      topic: p.topic || '打卡',
+      text,
+      like: 0, comment: 0, liked: false,
+      img: p.img || '📝'
+    };
+    if (!Array.isArray(userHealth.posts)) userHealth.posts = [];
+    userHealth.posts.unshift(post); // 最新在前
+    persistUserHealth();
+    community = mergeCommunity(mockCommunity, userHealth.posts);
+    syncDB();
+    return post;
+  }
+
+  // 年度活跃热力图：按近 18 周运动记录（时长+热量）计算每日活跃度
+  function activityHeatmap() {
+    const days = 126; // 18 周 * 7 天
+    const now = new Date();
+    const dates = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(now); d.setDate(now.getDate() - i);
+      dates.push(d.toISOString().slice(0, 10));
+    }
+    const byDate = {};
+    workouts.forEach(w => {
+      byDate[w.date] = (byDate[w.date] || 0) + Math.max(0, w.duration || 0) + Math.max(0, w.calories || 0) / 25;
+    });
+    const vals = dates.map(dt => Math.round(byDate[dt] || 0));
+    const max = Math.max(...vals, 1);
+    return vals.map(v => Math.min(70, Math.round(v / max * 70)));
+  }
+
+  // 睡眠阶段汇总（深睡/浅睡/REM/清醒 小时数）
+  function sleepBreakdown() {
+    const t = { deep: 0, light: 0, rem: 0, awake: 0 };
+    sleepStages.forEach(s => { t[s.stage] = (t[s.stage] || 0) + s.dur; });
+    const h = m => round(m / 60, 1);
+    return {
+      deep: h(t.deep), light: h(t.light), rem: h(t.rem), awake: h(t.awake),
+      total: round(sleepStages.reduce((s, x) => s + x.dur, 0) / 60, 1)
+    };
+  }
+
   // 保存用户资料：合并写回 localStorage 供下次启动读取，并重算派生数据
   function saveProfile(patch) {
     if (patch) {
@@ -507,6 +602,7 @@
     computeRecovery, generatePlan, runCamp, petGain, updatePetForm,
     nutritionSummary, estimateVO2max, saveProfile, resetProfile,
     saveTodayHealth, addWorkout, addMeal, clearMeals, setWaterCups, resetHealthData,
+    gainExp, addPost, activityHeatmap, sleepBreakdown,
     _state: { waterCups, selectedType: null }
   };
 })();

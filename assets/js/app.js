@@ -77,9 +77,16 @@
       case 'chdetail': go('community', 'challenge', { id: arg }); break;
       case 'like': toggleLike(arg); break;
       case 'post': openPost(arg); break;
+      case 'publish': publishPost(); break;
+      case 'topic': {
+        document.querySelectorAll('[data-topic]').forEach(x => x.classList.remove('on'));
+        el.classList.add('on');
+        break;
+      }
       case 'onboard': go('profile', 'onboard'); break;
       case 'obSubmit': submitOnboard(); break;
       case 'editProfile': go('profile', 'edit'); break;
+      case 'level': go('profile', 'level'); break;
       case 'saveProfile': doSaveProfile(); break;
       case 'resetProfile': doResetProfile(); break;
       case 'avatarUpload': triggerAvatarUpload(); break;
@@ -108,6 +115,12 @@
       document.body.appendChild(t); }
     t.textContent = msg; t.style.opacity = '1';
     clearTimeout(t._h); t._h = setTimeout(() => t.style.opacity = '0', 1600);
+  }
+
+  // 经验奖励 + 升级（返回提示文案）
+  function gainExp(n) {
+    const r = DB.gainExp(n);
+    return r.leveledUp ? `经验 +${n} · 🎉 升级至 Lv.${r.level}` : `经验 +${n}`;
   }
 
   // ============================================================
@@ -172,7 +185,7 @@
       </div>
 
       <div class="card">
-        <div class="card-title">🏅 连续打卡 & 等级</div>
+        <div class="card-title">🏅 连续打卡 & 等级 <span class="more" data-act="level">详情</span></div>
         <div class="flex between center">
           <div><div style="font-size:22px;font-weight:800">🔥 ${p.streak} 天</div><div class="tiny">坚持就是胜利</div></div>
           <div class="lv-chip">Lv.${p.level_num}</div>
@@ -309,8 +322,9 @@
       duration: Math.round(s.t / 60), distance: U.round(s.dist, 2),
       calories: Math.round(s.cal), avgHR: Math.round(s.hr), pace: s.pace, steps: 0
     });
+    const expRes = DB.gainExp(50);
     App.tracking = null;
-    App.sub = 'done'; App.params = { s };
+    App.sub = 'done'; App.params = { s, exp: 50, leveled: expRes.leveledUp };
     render();
   }
   function screenTracking() {
@@ -352,10 +366,11 @@
           <div class="metric"><div class="v">${Math.round(s.cal)}</div><div class="k">千卡</div></div>
         </div>
         <div class="row mt12"><div class="ri">🦊</div><div class="rt"><div class="t">元气狐 获得能量</div><div class="s">运动 +5 · 完成计划 +20</div></div><div class="rv up">+25 ⚡</div></div>
+        <div class="row"><div class="ri">⭐</div><div class="rt"><div class="t">经验 +${App.params.exp || 50}</div><div class="s">${App.params.leveled ? '🎉 升级啦！' : '继续加油'} · 当前 Lv.${DB.profile.level_num}</div></div><div class="rv up">Lv.${DB.profile.level_num}</div></div>
         <div class="tiny center mt12">已触发成就检查 · 数据已沉淀至趋势与恢复模型</div>
       </div>
       <button class="btn" data-act="nav:home">返回首页</button>
-      <button class="btn sec mt12" data-act="post">分享到社区</button>
+      <button class="btn sec mt12" data-act="sheet:post">分享到社区</button>
     </div>`;
   }
 
@@ -367,6 +382,7 @@
     const hs = DB.healthSeries;
     const last = hs[hs.length - 1];
     const r = DB.recovery;
+    const sb = DB.sleepBreakdown();
 
     // 健康仪表盘卡片
     const dash = [
@@ -383,9 +399,8 @@
     const trend = C.line([{ name: '体重', color: '#2ECC8F', data: w30, fill: true }],
       { min: 55, max: 61, h: 150, target: 55, xlabels: ['30天前', '', '', '', '', '', '今天'] });
 
-    // 年热力图
-    const heat = Array.from({ length: 18 * 7 }, () => Math.random() < .35 ? 0 : U.randInt(10, 70));
-    const heatSvg = C.heatmap(heat);
+    // 年度活跃热力图（基于运动记录生成，随录入数据同步）
+    const heatSvg = C.heatmap(DB.activityHeatmap());
 
     return `
     <div class="topbar"><div><h1>数据洞察</h1><div class="sub">恢复 · 趋势 · 睡眠</div></div></div>
@@ -426,21 +441,23 @@
       <div class="card">
         <div class="card-title">💤 睡眠分析 <span class="more" data-act="metric:睡眠">详情</span></div>
         ${C.sleepStages(DB.sleepStages)}
-        <div class="tiny mt8">深睡 1.6h · 浅睡 4.2h · REM 1.4h · 评分 ${last.sleepScore}</div>
+        <div class="tiny mt8">深睡 ${sb.deep}h · 浅睡 ${sb.light}h · REM ${sb.rem}h · 总时长 ${sb.total}h · 评分 ${last.sleepScore}</div>
       </div>
     </div>`;
   }
 
   function screenMetric(key) {
     if (key === '睡眠' || key === 'sleep') {
+      const sb = DB.sleepBreakdown();
       return `
       <div class="topbar"><div><h1>睡眠分析</h1><div class="sub">深睡/浅睡/REM</div></div><div class="avatar" data-act="back">←</div></div>
       <div class="scroll">
         <div class="card">${C.sleepStages(DB.sleepStages)}</div>
         <div class="card"><div class="card-title">📋 阶段解读</div>
-          <div class="row"><div class="ri">🌑</div><div class="rt"><div class="t">深睡 1.6h</div><div class="s">身体修复关键期</div></div><div class="rv up">优</div></div>
-          <div class="row"><div class="ri">🌕</div><div class="rt"><div class="t">浅睡 4.2h</div><div class="s">占比正常</div></div><div class="rv">良</div></div>
-          <div class="row"><div class="ri">💡</div><div class="rt"><div class="t">REM 1.4h</div><div class="s">记忆巩固</div></div><div class="rv">良</div></div>
+          <div class="row"><div class="ri">🌑</div><div class="rt"><div class="t">深睡 ${sb.deep}h</div><div class="s">身体修复关键期</div></div><div class="rv up">优</div></div>
+          <div class="row"><div class="ri">🌕</div><div class="rt"><div class="t">浅睡 ${sb.light}h</div><div class="s">占比正常</div></div><div class="rv">良</div></div>
+          <div class="row"><div class="ri">💡</div><div class="rt"><div class="t">REM ${sb.rem}h</div><div class="s">记忆巩固</div></div><div class="rv">良</div></div>
+          <div class="row"><div class="ri">🌙</div><div class="rt"><div class="t">总时长 ${sb.total}h</div><div class="s">昨晚睡眠</div></div><div class="rv">良</div></div>
         </div>
         <div class="card"><div class="card-title">💡 改善建议</div>
           <div class="row"><div class="ri">☕</div><div class="rt"><div class="t">咖啡因摄入晚于 14:00</div><div class="s">与入睡延迟相关，建议提前</div></div></div>
@@ -476,7 +493,7 @@
     DB.updatePetForm();
     const feed = DB.community.map(p => `
       <div class="feed">
-        <div class="head"><div class="av">${p.avatar}</div>
+        <div class="head"><div class="av">${avatarHTML(p.avatar)}</div>
           <div style="flex:1"><div class="un">${p.user} <span class="topic">#${p.topic}</span></div><div class="tm">${p.time}</div></div>
           <span class="pill" data-act="post:${p.id}">详情</span></div>
         <div class="txt">${p.text}</div>
@@ -508,7 +525,9 @@
           <div class="pet-name">${pet.name} · Lv.${pet.level}</div>
           <div class="pet-form">状态：${pet.form}</div>
           <div class="energy-bar"><i style="width:${pet.energy}%"></i></div>
-          <div class="tiny">能量 ${pet.energy}/100 · 运动 +5/10min · 完成计划 +20 · 连续打卡 +10</div>
+          <div class="tiny">能量 ${pet.energy}/100 · 宠物经验 ${pet.exp}/${pet.expNext}</div>
+          <div class="progress mt8"><i style="width:${Math.min(100, Math.round(pet.exp / pet.expNext * 100))}%"></i></div>
+          <div class="tiny">运动 +5/10min · 完成计划 +20 · 喂养 +25 · 连续打卡 +10</div>
           <button class="btn sm acc mt12" data-act="pet">🍖 陪它运动充能</button>
         </div>
       </div>
@@ -555,6 +574,7 @@
   function screenProfile() {
     if (App.sub === 'onboard') return screenOnboard();
     if (App.sub === 'edit') return screenEditProfile();
+    if (App.sub === 'level') return screenLevel();
     if (App.sub === 'privacy') return screenPrivacy();
     if (App.sub === 'alg') return screenAlg();
     const p = DB.profile;
@@ -586,6 +606,7 @@
 
       <div class="card">
         <div class="card-title">⚙️ 设置与合规</div>
+        <div class="row" data-act="level"><div class="ri">🏆</div><div class="rt"><div class="t">等级与经验</div><div class="s">查看成长进度与升级方式</div></div><span class="pill">Lv.${p.level_num}</span></div>
         <div class="row" data-act="alg"><div class="ri">🧠</div><div class="rt"><div class="t">算法透明度</div><div class="s">查看建议背后的逻辑</div></div><span class="pill">合规</span></div>
         <div class="row" data-act="privacy"><div class="ri">🔒</div><div class="rt"><div class="t">隐私与数据权利</div><div class="s">GDPR / 个人信息保护法</div></div><span class="pill">合规</span></div>
         <div class="row" data-act="nav:insight"><div class="ri">📊</div><div class="rt"><div class="t">数据与设备</div><div class="s">健康/运动设备同步</div></div><span class="pill">连接</span></div>
@@ -766,7 +787,7 @@
       bodyFat: num('#hl-fat'), muscle: num('#hl-muscle')
     });
     closeSheet();
-    toast('今日健康数据已更新，恢复评分已重算');
+    toast('今日健康数据已更新 · ' + gainExp(20));
     render();
   }
 
@@ -779,7 +800,7 @@
       calories: num('#wk-cal', 0), avgHR: num('#wk-hr', 0)
     });
     closeSheet();
-    toast('运动记录已保存');
+    toast('运动记录已保存 · ' + gainExp(30));
     render();
   }
 
@@ -787,7 +808,7 @@
     const f = DB.foodDB.find(x => x.name === name);
     if (!f) return;
     DB.addMeal(App.mealType, { name: f.name, cal: f.cal, p: f.p, c: f.c, f: f.f });
-    toast(`已添加到${mealLabel(App.mealType)}`);
+    toast(`已添加到${mealLabel(App.mealType)} · ` + gainExp(5));
     openSheet('meal');
   }
 
@@ -796,7 +817,7 @@
     const cal = parseFloat($('#food-cal')?.value);
     if (!name) { toast('请输入食物名称'); return; }
     DB.addMeal(App.mealType, { name, cal: isNaN(cal) ? 0 : Math.round(cal), p: 0, c: 0, f: 0 });
-    toast(`已添加 ${name}`);
+    toast(`已添加 ${name} · ` + gainExp(5));
     openSheet('meal');
   }
 
@@ -869,6 +890,44 @@
       </div>
       <div class="card"><div class="card-title">⚠️ 算法局限性</div>
         <div class="tiny">本建议基于可穿戴与自报数据，不能替代医疗诊断。如有伤病或慢性疾病，请遵医嘱并下调强度。</div>
+      </div>
+    </div>`;
+  }
+
+  // 等级与经验页
+  function screenLevel() {
+    const p = DB.profile, pet = DB.pet;
+    const pct = Math.min(100, Math.round(p.exp / p.exp_next * 100));
+    const ways = [
+      ['完成一次运动', '+50'], ['手动记录运动', '+30'], ['加入挑战赛', '+30'],
+      ['录入今日健康数据', '+20'], ['发布社区动态', '+10'], ['记录饮食', '+5'], ['喝水一杯', '+1']
+    ];
+    return `
+    <div class="topbar"><div><h1>等级与经验</h1><div class="sub">成长进度 · 实时升级</div></div><div class="avatar" data-act="back">←</div></div>
+    <div class="scroll">
+      <div class="hero"><span class="tag">我的等级</span><h2>Lv.${p.level_num}</h2>
+        <div class="advice">坚持运动、记录健康数据都能获得经验并升级。</div></div>
+      <div class="card">
+        <div class="card-title">⭐ 升级进度</div>
+        <div class="flex between center">
+          <div style="font-size:22px;font-weight:800">经验 ${p.exp}/${p.exp_next}</div>
+          <div class="lv-chip">Lv.${p.level_num}</div>
+        </div>
+        <div class="progress mt12"><i style="width:${pct}%"></i></div>
+        <div class="tiny mt8">距升级还差 ${p.exp_next - p.exp} 经验</div>
+      </div>
+      <div class="card">
+        <div class="card-title">🎁 如何获得经验</div>
+        ${ways.map(([k, v]) => `<div class="row"><div class="ri">⭐</div><div class="rt"><div class="t">${k}</div></div><div class="rv up">${v}</div></div>`).join('')}
+      </div>
+      <div class="card">
+        <div class="card-title">🦊 我的宠物 · ${pet.name}</div>
+        <div class="flex between center">
+          <div><div style="font-size:18px;font-weight:800">Lv.${pet.level} · ${pet.form}</div><div class="tiny">能量 ${pet.energy}/100 · 宠物经验 ${pet.exp}/${pet.expNext}</div></div>
+          <div style="font-size:40px">${pet.emoji}</div>
+        </div>
+        <div class="energy-bar mt8"><i style="width:${pet.energy}%"></i></div>
+        <div class="tiny mt8">运动 / 喂养可充能，能量满格更易触发「闪耀」形态。</div>
       </div>
     </div>`;
   }
@@ -951,13 +1010,16 @@
       <div class="tiny mt8">${plan.weekNote} · 周训练 ${plan.totalMin} 分钟</div>`;
   }
   function postSheet() {
+    const topics = ['晨跑', '减脂', '打卡', '瑜伽', '装备', '饮食'];
     return `<div class="field"><label>分享内容</label><textarea id="post-txt" rows="3" style="width:100%;border:1px solid var(--line);border-radius:12px;padding:12px;font:inherit" placeholder="今天的运动心得…">今天完成训练，状态满分！💪</textarea></div>
-      <div class="wrap"><span class="chip on">#晨跑</span><span class="chip">#减脂</span><span class="chip">#打卡</span></div>
-      <button class="btn mt16" data-act="post:publish">发布到动态</button>`;
+      <div class="field"><label>话题</label><div class="wrap">
+        ${topics.map((t, i) => `<span class="chip ${i === 0 ? 'on' : ''}" data-act="topic" data-topic="${t}">#${t}</span>`).join('')}
+      </div></div>
+      <button class="btn mt16" data-act="publish">发布到动态</button>`;
   }
 
   function addWater(act) {
-    if (act === 'add') App.state.waterCups = Math.min(DB.waterGoal + 2, App.state.waterCups + 1);
+    if (act === 'add') { App.state.waterCups = Math.min(DB.waterGoal + 2, App.state.waterCups + 1); DB.gainExp(1); }
     else App.state.waterCups = Math.max(0, App.state.waterCups - 1);
     DB.setWaterCups(App.state.waterCups); // 持久化
     // 刷新 sheet
@@ -965,10 +1027,14 @@
   }
 
   function genPlan() { toast('已根据最新档案重新生成计划'); }
-  function feedPet() { const e = DB.petGain('workout10'); toast(`元气狐能量 +5，当前 ${e}/100`); render(); }
+  function feedPet() {
+    const p = DB.petGain('feed');
+    toast(`元气狐能量 +25（${p.energy}/100）· ${gainExp(10)}`);
+    render();
+  }
   function joinChallenge(id) {
     const c = DB.challenges.find(x => x.id === id); if (c) c.joined = true;
-    toast('已加入挑战，加油！'); render();
+    toast('已加入挑战 · ' + gainExp(30)); render();
   }
   function toggleLike(id) {
     const p = DB.community.find(x => x.id === id); if (!p) return;
@@ -976,9 +1042,21 @@
   }
   function openPost(id) {
     const p = DB.community.find(x => x.id === id);
-    if (!p) { toast('动态已发布（演示）'); closeSheet(); render(); return; }
-    if (id === 'publish') { toast('动态已发布（演示）'); closeSheet(); render(); return; }
+    if (!p) return;
     toast(`「${p.user}」的动态 · ${p.like} 赞`);
+  }
+
+  // 发布自己的社区动态
+  function publishPost() {
+    const text = ($('#post-txt')?.value || '').trim();
+    if (!text) { toast('写点什么再发布吧'); return; }
+    const topicEl = document.querySelector('[data-topic].on');
+    const topic = topicEl ? topicEl.dataset.topic : '打卡';
+    const post = DB.addPost({ text, topic, img: '📝' });
+    if (!post) { toast('发布失败'); return; }
+    closeSheet();
+    toast('动态已发布 · ' + gainExp(10));
+    go('community');
   }
 
   function showWhy() {
