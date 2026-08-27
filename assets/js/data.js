@@ -70,6 +70,24 @@
 
   const profile = mergeProfile(loadProfile());
 
+  // ---------- 用户自录健康数据（覆盖/追加演示数据，localStorage 持久化） ----------
+  // 结构：{ today:{date,...}, workouts:[...], meals:{...}, waterCups:number }
+  function loadUserHealth() {
+    try {
+      if (typeof localStorage === 'undefined') return null;
+      const raw = localStorage.getItem('sport_health_user');
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
+  }
+  const userHealth = loadUserHealth() || {};
+
+  function persistUserHealth() {
+    try {
+      if (typeof localStorage === 'undefined') return;
+      localStorage.setItem('sport_health_user', JSON.stringify(userHealth));
+    } catch (e) { /* 存储超限/隐私模式时静默失败 */ }
+  }
+
   // ---------- 生成最近 N 天健康时间序列 ----------
   function genHealthSeries(n) {
     const arr = [];
@@ -98,19 +116,23 @@
   const healthSeries = genHealthSeries(120); // 近 120 天用于年/月/周趋势
 
   // ---------- 睡眠阶段（昨晚） ----------
-  function genSleepStages() {
-    // 生成 23:30 -> 07:10 的睡眠周期（每 30min 一段）
+  // hours：目标总睡眠时长；不传则按默认 7.5h 生成
+  function genSleepStages(hours) {
+    // 生成 23:30 起的睡眠周期，按目标时长等比缩放
     const stages = [];
     let t = 23 * 60 + 30;
     const seq = ['light', 'deep', 'light', 'rem', 'light', 'deep', 'light', 'rem', 'light', 'deep', 'light', 'rem', 'light', 'awake', 'light', 'rem'];
+    const baseTotal = 450; // 原固定周期的总分钟数
+    const k = ((hours || 7.5) * 60) / baseTotal;
     seq.forEach((s, i) => {
-      const dur = (s === 'awake') ? 10 : (i === seq.length - 1 ? 20 : 30);
+      const base = (s === 'awake') ? 10 : (i === seq.length - 1 ? 20 : 30);
+      const dur = Math.round(base * k);
       stages.push({ start: t, dur, stage: s });
       t = (t + dur) % (24 * 60);
     });
     return stages;
   }
-  const sleepStages = genSleepStages();
+  let sleepStages = genSleepStages();
 
   // ---------- 运动历史 ----------
   const sportTypes = [
@@ -153,9 +175,15 @@
         steps: t === 'strength' || t === 'yoga' ? 0 : randInt(2000, 12000)
       });
     }
-    return arr.sort((a, b) => a.date < b.date ? 1 : -1);
+    return arr.sort((a, b) => a.date === b.date ? 0 : (a.date < b.date ? 1 : -1));
   }
-  const workouts = genWorkouts(60);
+  // 用户自录记录在前，演示记录在后，按日期倒序
+  function mergeWorkouts(mock, user) {
+    const u = Array.isArray(user) ? user : [];
+    return [...u, ...mock].sort((a, b) => a.date === b.date ? 0 : (a.date < b.date ? 1 : -1));
+  }
+  const mockWorkouts = genWorkouts(60);
+  let workouts = mergeWorkouts(mockWorkouts, userHealth.workouts);
 
   // ---------- 营养 / 饮水 ----------
   const foodDB = [
@@ -168,13 +196,21 @@
     { name: '牛油果(半个)', cal: 160, p: 2, c: 9, f: 15, emoji: '🥑' },
     { name: '三文鱼(100g)', cal: 208, p: 20, c: 0, f: 13, emoji: '🐟' }
   ];
-  const meals = {
+  const DEFAULT_MEALS = {
     breakfast: [{ name: '燕麦(40g)', cal: 150, p: 5, c: 27, f: 3 }, { name: '鸡蛋(1个)', cal: 78, p: 6.3, c: 0.6, f: 5.3 }],
     lunch: [{ name: '鸡胸肉(100g)', cal: 165, p: 31, c: 0, f: 3.6 }, { name: '糙米饭(150g)', cal: 165, p: 3.5, c: 35, f: 1.2 }, { name: '西兰花(100g)', cal: 34, p: 2.8, c: 7, f: 0.4 }],
     dinner: [{ name: '三文鱼(100g)', cal: 208, p: 20, c: 0, f: 13 }, { name: '牛油果(半个)', cal: 160, p: 2, c: 9, f: 15 }],
     snack: []
   };
-  let waterCups = 4;            // 今日已喝杯数
+  function cloneMeals(m) {
+    const out = {};
+    ['breakfast', 'lunch', 'dinner', 'snack'].forEach(k => {
+      out[k] = Array.isArray(m[k]) ? m[k].map(x => Object.assign({}, x)) : [];
+    });
+    return out;
+  }
+  let meals = cloneMeals(userHealth.meals || DEFAULT_MEALS);
+  let waterCups = (userHealth.waterCups != null) ? userHealth.waterCups : 4; // 今日已喝杯数
   const waterGoal = 8;          // 目标杯数
 
   // ---------- 成就系统 ----------
@@ -319,16 +355,121 @@
     return round(clamp(vo2, 25, 65), 1);
   }
 
-  // 今日健康快照（随个人基线变化可重算）
+  // ---------- 今日健康快照（演示值 + 用户自录覆盖） ----------
+  const mockToday = Object.assign({}, healthSeries[healthSeries.length - 1]); // 保留演示"今日"快照，供恢复用
   let today = healthSeries[healthSeries.length - 1];
+
+  // 将用户自录的今日健康数据覆盖到 today，并按睡眠时长重建睡眠阶段（幂等）
+  function applyTodayOverride() {
+    const th = userHealth.today;
+    if (!th || th.date !== todayKey()) return;
+    const num = v => (v === undefined || v === null || v === '') ? undefined : (isNaN(+v) ? undefined : +v);
+    ['restingHR', 'hrv', 'spo2', 'stress', 'temp', 'sleepHours', 'sleepScore', 'weight', 'bodyFat', 'muscle'].forEach(k => {
+      const n = num(th[k]);
+      if (n !== undefined) today[k] = n;
+    });
+    if (today.sleepHours) sleepStages = genSleepStages(today.sleepHours);
+  }
+  applyTodayOverride(); // 启动时叠加一次
+
   let recovery = computeRecovery(today);
+
+  // 同步可变数据到 window.DB 引用
+  function syncDB() {
+    window.DB.today = today;
+    window.DB.recovery = recovery;
+    window.DB.sleepStages = sleepStages;
+    window.DB.workouts = workouts;
+    window.DB.meals = meals;
+    window.DB.waterCups = waterCups;
+  }
 
   // 重算依赖个人档案的派生数据（如恢复评分，因其依赖 baseline）
   function recompute() {
     today = healthSeries[healthSeries.length - 1];
     recovery = computeRecovery(today);
-    DB.today = today;
-    DB.recovery = recovery;
+    syncDB();
+  }
+
+  // 保存用户自录的今日健康数据（未填写的字段保留演示值）
+  function saveTodayHealth(obj) {
+    const keys = ['restingHR', 'hrv', 'spo2', 'stress', 'temp', 'sleepHours', 'sleepScore', 'weight', 'bodyFat', 'muscle'];
+    const patch = { date: todayKey() };
+    keys.forEach(k => {
+      const v = obj && obj[k];
+      if (v !== undefined && v !== null && v !== '' && !isNaN(+v)) patch[k] = +v;
+    });
+    userHealth.today = patch;
+    persistUserHealth();
+    applyTodayOverride();
+    recompute();
+    return patch;
+  }
+
+  // 新增一条运动记录（用户自录）
+  function addWorkout(rec) {
+    const w = {
+      id: 'u' + new Date().getTime(),
+      type: rec.type,
+      date: rec.date || todayKey(),
+      duration: Math.max(0, Math.round(rec.duration || 0)),
+      calories: Math.max(0, Math.round(rec.calories || 0)),
+      distance: Math.max(0, +(rec.distance || 0)),
+      pace: Math.max(0, +(rec.pace || 0)),
+      avgHR: Math.max(0, Math.round(rec.avgHR || 0)),
+      steps: Math.max(0, Math.round(rec.steps || 0))
+    };
+    if (!Array.isArray(userHealth.workouts)) userHealth.workouts = [];
+    userHealth.workouts.push(w);
+    persistUserHealth();
+    workouts = mergeWorkouts(mockWorkouts, userHealth.workouts);
+    syncDB();
+    return w;
+  }
+
+  // 向指定餐次添加食物
+  function addMeal(type, item) {
+    if (!meals[type]) meals[type] = [];
+    meals[type].push(Object.assign({}, item));
+    userHealth.meals = meals;
+    persistUserHealth();
+    syncDB();
+    return meals;
+  }
+
+  // 清空全部饮食记录
+  function clearMeals() {
+    meals = { breakfast: [], lunch: [], dinner: [], snack: [] };
+    userHealth.meals = meals;
+    persistUserHealth();
+    syncDB();
+    return meals;
+  }
+
+  // 设置今日饮水量
+  function setWaterCups(n) {
+    waterCups = Math.max(0, Math.round(n));
+    userHealth.waterCups = waterCups;
+    persistUserHealth();
+    syncDB();
+    return waterCups;
+  }
+
+  // 清空所有用户自录数据，恢复纯演示数据
+  function resetHealthData() {
+    try { if (typeof localStorage !== 'undefined') localStorage.removeItem('sport_health_user'); } catch (e) {}
+    userHealth.today = null;
+    userHealth.workouts = [];
+    userHealth.meals = null;
+    userHealth.waterCups = null;
+    Object.assign(healthSeries[healthSeries.length - 1], mockToday);
+    today = healthSeries[healthSeries.length - 1];
+    sleepStages = genSleepStages();
+    workouts = mergeWorkouts(mockWorkouts, []);
+    meals = cloneMeals(DEFAULT_MEALS);
+    waterCups = 4;
+    recovery = computeRecovery(today);
+    syncDB();
   }
 
   // 保存用户资料：合并写回 localStorage 供下次启动读取，并重算派生数据
@@ -365,6 +506,7 @@
     community, pet, today, recovery,
     computeRecovery, generatePlan, runCamp, petGain, updatePetForm,
     nutritionSummary, estimateVO2max, saveProfile, resetProfile,
+    saveTodayHealth, addWorkout, addMeal, clearMeals, setWaterCups, resetHealthData,
     _state: { waterCups, selectedType: null }
   };
 })();

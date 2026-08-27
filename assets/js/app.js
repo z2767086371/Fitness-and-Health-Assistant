@@ -25,6 +25,7 @@
     tracking: null,     // 进行中运动状态
     trackTimer: null,
     sheet: null,
+    mealType: 'breakfast',
     state: { waterCups: DB.waterCups }
   };
   window.App = App;
@@ -82,6 +83,13 @@
       case 'saveProfile': doSaveProfile(); break;
       case 'resetProfile': doResetProfile(); break;
       case 'avatarUpload': triggerAvatarUpload(); break;
+      case 'saveHealth': doSaveHealth(); break;
+      case 'saveWorkout': doSaveWorkout(); break;
+      case 'addFood': addFood(el.dataset.food); break;
+      case 'addCustomFood': addCustomFood(); break;
+      case 'clearMeals': doClearMeals(); break;
+      case 'mealType': { App.mealType = arg; openSheet('meal'); break; }
+      case 'resetHealth': doResetHealth(); break;
       case 'privacy': go('profile', 'privacy'); break;
       case 'alg': go('profile', 'alg'); break;
       case 'member': toast('已为你预留会员入口（演示）'); break;
@@ -218,6 +226,12 @@
       </div>
 
       <div class="card">
+        <div class="card-title">📋 运动记录 <span class="more" data-act="sheet:workout">＋ 手动记录</span></div>
+        ${workoutRows(DB.workouts.slice(0, 5))}
+        <div class="tiny mt8">完成训练会自动保存；也可手动录入。未录入时保留演示记录。</div>
+      </div>
+
+      <div class="card">
         <div class="card-title">🏃 智能跑步教练</div>
         <div class="wrap">
           ${['5K','10K','半马','全马'].map(l => `<div class="chip ${l==='半马'?'on':''}" data-act="camp:${l}">${l}训练营</div>`).join('')}
@@ -288,8 +302,13 @@
   function finishSport() {
     clearInterval(App.trackTimer); App.trackTimer = null;
     const s = App.tracking;
-    // 沉淀：宠物获能 + 打卡
+    // 沉淀：宠物获能 + 打卡 + 写入运动记录
     DB.petGain('workout10'); DB.petGain('planDone');
+    DB.addWorkout({
+      type: s.type.id, date: U.todayKey(),
+      duration: Math.round(s.t / 60), distance: U.round(s.dist, 2),
+      calories: Math.round(s.cal), avgHR: Math.round(s.hr), pace: s.pace, steps: 0
+    });
     App.tracking = null;
     App.sub = 'done'; App.params = { s };
     render();
@@ -371,6 +390,13 @@
     return `
     <div class="topbar"><div><h1>数据洞察</h1><div class="sub">恢复 · 趋势 · 睡眠</div></div></div>
     <div class="scroll">
+      <div class="card">
+        <div class="card-title">📝 录入我的健康数据</div>
+        <div class="tiny">录入你的真实心率/睡眠/体重等，替代演示模拟值（不录入则保留演示数据）。</div>
+        <button class="btn sm mt12" data-act="sheet:health">录入今日健康数据</button>
+        <button class="btn sec sm mt12" data-act="resetHealth">清空录入 · 恢复演示数据</button>
+      </div>
+
       <div class="card">
         <div class="card-title">🔋 恢复与训练准备度 <button class="why-btn" data-act="why" style="margin:0">❓为什么</button></div>
         <div class="recovery-row">
@@ -730,6 +756,78 @@
     reader.readAsDataURL(file);
   }
 
+  // ---------- 健康数据录入 ----------
+  function doSaveHealth() {
+    const num = (id) => { const el = $(id); const v = el ? parseFloat(el.value) : NaN; return isNaN(v) ? null : v; };
+    DB.saveTodayHealth({
+      restingHR: num('#hl-rhr'), hrv: num('#hl-hrv'), spo2: num('#hl-spo2'),
+      stress: num('#hl-stress'), temp: num('#hl-temp'), weight: num('#hl-weight'),
+      sleepHours: num('#hl-sleep'), sleepScore: num('#hl-score'),
+      bodyFat: num('#hl-fat'), muscle: num('#hl-muscle')
+    });
+    closeSheet();
+    toast('今日健康数据已更新，恢复评分已重算');
+    render();
+  }
+
+  function doSaveWorkout() {
+    const num = (id, def) => { const el = $(id); const v = el ? parseFloat(el.value) : NaN; return isNaN(v) ? def : v; };
+    DB.addWorkout({
+      type: $('#wk-type')?.value || 'run',
+      date: $('#wk-date')?.value || U.todayKey(),
+      duration: num('#wk-dur', 30), distance: num('#wk-dist', 0),
+      calories: num('#wk-cal', 0), avgHR: num('#wk-hr', 0)
+    });
+    closeSheet();
+    toast('运动记录已保存');
+    render();
+  }
+
+  function addFood(name) {
+    const f = DB.foodDB.find(x => x.name === name);
+    if (!f) return;
+    DB.addMeal(App.mealType, { name: f.name, cal: f.cal, p: f.p, c: f.c, f: f.f });
+    toast(`已添加到${mealLabel(App.mealType)}`);
+    openSheet('meal');
+  }
+
+  function addCustomFood() {
+    const name = ($('#food-name')?.value || '').trim();
+    const cal = parseFloat($('#food-cal')?.value);
+    if (!name) { toast('请输入食物名称'); return; }
+    DB.addMeal(App.mealType, { name, cal: isNaN(cal) ? 0 : Math.round(cal), p: 0, c: 0, f: 0 });
+    toast(`已添加 ${name}`);
+    openSheet('meal');
+  }
+
+  function doClearMeals() {
+    DB.clearMeals();
+    toast('饮食记录已清空');
+    openSheet('meal');
+  }
+
+  function doResetHealth() {
+    DB.resetHealthData();
+    App.state.waterCups = DB.waterCups;
+    App.mealType = 'breakfast';
+    toast('已恢复演示数据');
+    render();
+  }
+
+  function mealLabel(t) { return { breakfast: '早餐', lunch: '午餐', dinner: '晚餐', snack: '加餐' }[t] || '早餐'; }
+
+  // 渲染运动记录行（列表）
+  function workoutRows(list) {
+    if (!list || !list.length) return `<div class="tiny">暂无运动记录</div>`;
+    return list.map(w => {
+      const t = DB.sportTypes.find(x => x.id === w.type) || { name: w.type, icon: '🏃', color: '#2ECC8F' };
+      return `<div class="row"><div class="ri" style="background:${t.color}22">${t.icon}</div>
+        <div class="rt"><div class="t">${t.name} · ${w.duration}分钟</div>
+        <div class="s">${w.date.slice(5, 10)} · ${w.distance}km · ${w.calories}kcal</div></div>
+        <div class="rv">${w.avgHR ? w.avgHR + ' bpm' : ''}</div></div>`;
+    }).join('');
+  }
+
   // 隐私合规
   function screenPrivacy() {
     return `
@@ -784,15 +882,18 @@
     if (name === 'meal') html = mealSheet();
     else if (name === 'plan') html = planSheet();
     else if (name === 'post') html = postSheet();
+    else if (name === 'health') html = healthSheet();
+    else if (name === 'workout') html = workoutSheet();
     $('#sheet').innerHTML = `<div class="handle"></div><h3>${sheetTitle(name)}</h3>${html}<button class="btn sec mt16" data-act="closeSheet">关闭</button>`;
     $('#sheet-mask').classList.add('show'); $('#sheet').classList.add('show');
   }
-  function sheetTitle(n){ return {meal:'🍱 记录饮食',plan:'🤖 重新生成计划',post:'📝 发布动态'}[n]||''; }
+  function sheetTitle(n){ return {meal:'🍱 记录饮食',plan:'🤖 重新生成计划',post:'📝 发布动态',health:'📝 录入今日健康数据',workout:'📋 手动记录运动'}[n]||''; }
   function closeSheet() { $('#sheet-mask').classList.remove('show'); $('#sheet').classList.remove('show'); }
 
   function mealSheet() {
     const n = DB.nutritionSummary();
-    const foods = DB.foodDB.slice(0, 6).map(f => `<div class="chip" data-food="${f.name}" style="width:46%">${f.emoji} ${f.name} ${f.cal}kcal</div>`).join('');
+    const mealTypes = [['breakfast', '早餐'], ['lunch', '午餐'], ['dinner', '晚餐'], ['snack', '加餐']];
+    const foods = DB.foodDB.slice(0, 6).map(f => `<span class="chip" data-act="addFood" data-food="${f.name}" style="width:46%">${f.emoji} ${f.name} ${f.cal}kcal</span>`).join('');
     const waterPct = Math.round(App.state.waterCups / DB.waterGoal * 100);
     return `
       <div class="tiny">今日营养</div>
@@ -801,14 +902,45 @@
         <div class="metric"><div class="v">${n.p}g</div><div class="k">蛋白质</div></div>
         <div class="metric"><div class="v">${n.c}g</div><div class="k">碳水</div></div>
       </div>
-      <div class="card-title mt12">⚡ 快速添加（最近常吃 / 扫码 / 拍照）</div>
-      <div class="wrap">${foods}<div class="chip" style="width:46%">📷 拍照识别</div><div class="chip" style="width:46%">🔍 扫码录入</div></div>
+      <div class="card-title mt12">🥣 选择餐次</div>
+      <div class="wrap">${mealTypes.map(([id, lb]) => `<span class="chip ${App.mealType === id ? 'on' : ''}" data-act="mealType:${id}">${lb}</span>`).join('')}</div>
+      <div class="card-title mt12">⚡ 快速添加食物</div>
+      <div class="wrap">${foods}</div>
+      <div class="card-title mt12">✏️ 自定义食物</div>
+      <div class="flex gap8">
+        <input id="food-name" type="text" placeholder="食物名称" style="flex:2;width:auto;padding:10px;border:1px solid var(--line);border-radius:12px;font:inherit" />
+        <input id="food-cal" type="number" placeholder="kcal" style="flex:1;width:auto;padding:10px;border:1px solid var(--line);border-radius:12px;font:inherit" />
+      </div>
+      <button class="btn sm mt12" data-act="addCustomFood">＋ 添加到${mealLabel(App.mealType)}</button>
+      <button class="btn sec sm mt12" data-act="clearMeals">🗑️ 清空饮食记录</button>
       <div class="card-title mt12">💧 饮水 ${App.state.waterCups}/${DB.waterGoal} 杯</div>
       <div class="flex gap8 center">
         <button class="btn sec sm" data-act="water:remove">－</button>
         <div class="progress" style="flex:1"><i style="width:${waterPct}%"></i></div>
         <button class="btn sm acc" data-act="water:add">＋ 一杯</button>
       </div>`;
+  }
+  function healthSheet() {
+    const t = DB.today;
+    const f = (id, label, val, unit) => `<div class="field" style="flex:1"><label>${label}${unit ? ' (' + unit + ')' : ''}</label><input id="${id}" type="number" value="${val}" /></div>`;
+    return `
+      <div class="tiny">填写你的真实数据，留空则保留演示值；保存后自动重算恢复评分。</div>
+      <div class="flex gap8 mt12">${f('hl-rhr', '静息心率', t.restingHR, 'bpm')}${f('hl-hrv', 'HRV', t.hrv, 'ms')}</div>
+      <div class="flex gap8">${f('hl-spo2', '血氧', t.spo2, '%')}${f('hl-stress', '压力', t.stress, '')}</div>
+      <div class="flex gap8">${f('hl-temp', '体温', t.temp, '℃')}${f('hl-weight', '体重', t.weight, 'kg')}</div>
+      <div class="flex gap8">${f('hl-sleep', '睡眠时长', t.sleepHours, 'h')}${f('hl-score', '睡眠评分', t.sleepScore, '')}</div>
+      <div class="flex gap8">${f('hl-fat', '体脂', t.bodyFat, '%')}${f('hl-muscle', '肌肉', t.muscle, 'kg')}</div>
+      <button class="btn mt16" data-act="saveHealth">保存今日健康数据</button>`;
+  }
+  function workoutSheet() {
+    const types = DB.sportTypes.map(t => `<option value="${t.id}">${t.icon} ${t.name}</option>`).join('');
+    const f = (id, label, val, step) => `<div class="field" style="flex:1"><label>${label}</label><input id="${id}" type="number" ${step ? 'step="' + step + '"' : ''} value="${val}" /></div>`;
+    return `
+      <div class="field"><label>运动类型</label><select id="wk-type">${types}</select></div>
+      <div class="field"><label>日期</label><input id="wk-date" type="date" value="${U.todayKey()}" /></div>
+      <div class="flex gap8">${f('wk-dur', '时长(分)', 30)}${f('wk-dist', '距离(km)', 0, '0.01')}</div>
+      <div class="flex gap8">${f('wk-cal', '热量(kcal)', 200)}${f('wk-hr', '平均心率', 120)}</div>
+      <button class="btn mt16" data-act="saveWorkout">保存运动记录</button>`;
   }
   function planSheet() {
     const plan = DB.generatePlan(DB.profile);
@@ -827,6 +959,7 @@
   function addWater(act) {
     if (act === 'add') App.state.waterCups = Math.min(DB.waterGoal + 2, App.state.waterCups + 1);
     else App.state.waterCups = Math.max(0, App.state.waterCups - 1);
+    DB.setWaterCups(App.state.waterCups); // 持久化
     // 刷新 sheet
     $('#sheet').innerHTML = `<div class="handle"></div><h3>🍱 记录饮食</h3>${mealSheet()}<button class="btn sec mt16" data-act="closeSheet">关闭</button>`;
   }
