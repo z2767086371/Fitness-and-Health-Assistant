@@ -15,7 +15,9 @@
   const fmtDate = (d) => d.toISOString().slice(5, 10);
 
   // ---------- 用户档案（含算法基线） ----------
-  const profile = {
+  // 默认档案仅作为首次使用的占位；用户可在「我的 → 编辑个人资料」中覆盖，
+  // 并通过 localStorage 持久化（离线可用、无需后端）。
+  const DEFAULT_PROFILE = {
     name: '小琳',
     avatar: '🦊',
     age: 25,
@@ -41,6 +43,32 @@
     availMins: 45,
     onboarded: true
   };
+
+  // 允许用户覆盖的标量字段白名单（其余字段如 level_num/exp 由系统维护）
+  const PROFILE_KEYS = ['name', 'avatar', 'age', 'gender', 'height', 'weight', 'goal', 'level',
+    'memberDays', 'streak', 'level_num', 'exp', 'exp_next', 'availDays', 'availMins', 'onboarded'];
+
+  // 从 localStorage 读取用户此前保存的资料（首次使用返回 null）
+  function loadProfile() {
+    try {
+      if (typeof localStorage === 'undefined') return null;
+      const raw = localStorage.getItem('sport_profile');
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
+  }
+
+  // 将用户保存的资料合并进默认档案，返回全新对象（不污染 DEFAULT_PROFILE）
+  function mergeProfile(saved) {
+    const out = Object.assign({}, DEFAULT_PROFILE);
+    out.baseline = Object.assign({}, DEFAULT_PROFILE.baseline);
+    if (!saved) return out;
+    if (saved.baseline) Object.assign(out.baseline, saved.baseline);
+    if (Array.isArray(saved.equipment)) out.equipment = saved.equipment.slice();
+    PROFILE_KEYS.forEach(k => { if (saved[k] !== undefined) out[k] = saved[k]; });
+    return out;
+  }
+
+  const profile = mergeProfile(loadProfile());
 
   // ---------- 生成最近 N 天健康时间序列 ----------
   function genHealthSeries(n) {
@@ -291,9 +319,43 @@
     return round(clamp(vo2, 25, 65), 1);
   }
 
-  // 今日健康快照
-  const today = healthSeries[healthSeries.length - 1];
-  const recovery = computeRecovery(today);
+  // 今日健康快照（随个人基线变化可重算）
+  let today = healthSeries[healthSeries.length - 1];
+  let recovery = computeRecovery(today);
+
+  // 重算依赖个人档案的派生数据（如恢复评分，因其依赖 baseline）
+  function recompute() {
+    today = healthSeries[healthSeries.length - 1];
+    recovery = computeRecovery(today);
+    DB.today = today;
+    DB.recovery = recovery;
+  }
+
+  // 保存用户资料：合并写回 localStorage 供下次启动读取，并重算派生数据
+  function saveProfile(patch) {
+    if (patch) {
+      if (patch.baseline) { Object.assign(profile.baseline, patch.baseline); delete patch.baseline; }
+      Object.assign(profile, patch);
+    }
+    persistProfile();
+    recompute();
+    return profile;
+  }
+
+  // 恢复为默认占位档案
+  function resetProfile() {
+    Object.assign(profile, mergeProfile(null));
+    persistProfile();
+    recompute();
+    return profile;
+  }
+
+  function persistProfile() {
+    try {
+      if (typeof localStorage === 'undefined') return;
+      localStorage.setItem('sport_profile', JSON.stringify(profile));
+    } catch (e) { /* 隐私模式 / 存储超限时静默失败，不影响使用 */ }
+  }
 
   // ---------- 导出 ----------
   window.DB = {
@@ -302,7 +364,7 @@
     foodDB, meals, waterCups, waterGoal, achievements, challenges,
     community, pet, today, recovery,
     computeRecovery, generatePlan, runCamp, petGain, updatePetForm,
-    nutritionSummary, estimateVO2max,
+    nutritionSummary, estimateVO2max, saveProfile, resetProfile,
     _state: { waterCups, selectedType: null }
   };
 })();

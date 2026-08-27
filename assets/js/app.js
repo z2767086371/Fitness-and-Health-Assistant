@@ -8,6 +8,14 @@
   const DB = window.DB, C = window.Charts, U = DB.util;
   const $ = (s, r = document) => r.querySelector(s);
   const view = () => $('#view');
+  const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  // 头像：emoji，或用户上传的图片（dataURL/URL）则渲染为 <img>
+  function avatarHTML(a) {
+    if (a && (a.indexOf('data:') === 0 || a.indexOf('http') === 0)) {
+      return `<img src="${a}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block"/>`;
+    }
+    return a || '🙂';
+  }
 
   // ---------------- 全局状态 ----------------
   const App = {
@@ -70,6 +78,10 @@
       case 'post': openPost(arg); break;
       case 'onboard': go('profile', 'onboard'); break;
       case 'obSubmit': submitOnboard(); break;
+      case 'editProfile': go('profile', 'edit'); break;
+      case 'saveProfile': doSaveProfile(); break;
+      case 'resetProfile': doResetProfile(); break;
+      case 'avatarUpload': triggerAvatarUpload(); break;
       case 'privacy': go('profile', 'privacy'); break;
       case 'alg': go('profile', 'alg'); break;
       case 'member': toast('已为你预留会员入口（演示）'); break;
@@ -110,8 +122,8 @@
 
     return `
     <div class="topbar">
-      <div><h1>早安，${p.name} 👋</h1><div class="sub">${U.todayKey()} · 第 ${p.streak} 天连续打卡</div></div>
-      <div class="avatar">${p.avatar}</div>
+      <div><h1>早安，${esc(p.name)} 👋</h1><div class="sub">${U.todayKey()} · 第 ${p.streak} 天连续打卡</div></div>
+      <div class="avatar">${avatarHTML(p.avatar)}</div>
     </div>
     <div class="scroll">
       <div class="hero">
@@ -313,7 +325,7 @@
         <div class="celebrate">
           <div class="confetti">🎉</div>
           <h2>运动完成！</h2>
-          <p>太棒了，${DB.profile.name}！今日 ${s.type.name} 已记录。</p>
+          <p>太棒了，${esc(DB.profile.name)}！今日 ${s.type.name} 已记录。</p>
         </div>
         <div class="metrics">
           <div class="metric"><div class="v">${s.dist.toFixed(2)}</div><div class="k">距离 km</div></div>
@@ -488,7 +500,7 @@
     const board = [
       { u: '风一样的男子', v: c.goal * 0.98, me: false },
       { u: 'Yoga_Lily', v: c.goal * 0.91, me: false },
-      { u: DB.profile.name, v: c.progress, me: true },
+      { u: esc(DB.profile.name), v: c.progress, me: true },
       { u: '小步快跑', v: c.goal * 0.55, me: false },
       { u: '阿May', v: c.goal * 0.4, me: false }
     ].sort((a,b)=>b.v-a.v);
@@ -516,6 +528,7 @@
   // ============================================================
   function screenProfile() {
     if (App.sub === 'onboard') return screenOnboard();
+    if (App.sub === 'edit') return screenEditProfile();
     if (App.sub === 'privacy') return screenPrivacy();
     if (App.sub === 'alg') return screenAlg();
     const p = DB.profile;
@@ -530,11 +543,13 @@
     <div class="scroll">
       <div class="card">
         <div class="flex center gap12">
-          <div class="avatar" style="width:56px;height:56px;font-size:30px">${p.avatar}</div>
-          <div style="flex:1"><div style="font-size:18px;font-weight:800">${p.name}</div>
-            <div class="tiny">${p.gender} · ${p.age}岁 · ${p.height}cm · ${p.weight}kg</div></div>
+          <div class="avatar" style="width:56px;height:56px;font-size:30px">${avatarHTML(p.avatar)}</div>
+          <div style="flex:1"><div style="font-size:18px;font-weight:800">${esc(p.name)}</div>
+            <div class="tiny">${p.gender} · ${p.age}岁 · ${p.height}cm · ${p.weight}kg</div>
+            <div class="tiny mt8">🎯 ${p.goal} · ${p.level}</div></div>
           <div class="lv-chip">Lv.${p.level_num}</div>
         </div>
+        <button class="btn sm mt12" data-act="editProfile">👤 编辑个人资料</button>
         <button class="btn sm sec mt12" data-act="onboard">✏️ 重新体能测评</button>
       </div>
 
@@ -600,9 +615,119 @@
     const sq = +($('#ob-sq')?.value || 20);
     // 推断水平
     const level = sq >= 30 ? '进阶' : sq >= 22 ? '中级' : '新手';
-    DB.profile.goal = goal; DB.profile.availDays = days; DB.profile.availMins = mins; DB.profile.level = level;
+    DB.saveProfile({ goal, availDays: days, availMins: mins, level });
     toast(`已生成「${goal}」计划 · 水平评估：${level}`);
     go('sport');
+  }
+
+  // 编辑个人资料（覆盖 data.js 默认档案，localStorage 持久化）
+  function screenEditProfile() {
+    const p = DB.profile;
+    const emojis = ['🦊', '🐯', '🐰', '🐻', '🐼', '🐨', '🐧', '🦁', '🐶', '🐱', '🐹', '🐷'];
+    const eq = ['无器械', '弹力带', '瑜伽垫', '哑铃', '跑步机'];
+    const chip = (list, attr, val) => list.map(x => `<span class="chip ${x === val ? 'on' : ''}" data-${attr}="${x}">${x}</span>`).join('');
+    return `
+    <div class="topbar"><div><h1>编辑个人资料</h1><div class="sub">本地保存 · 不上传服务器</div></div><div class="avatar" data-act="back">←</div></div>
+    <div class="scroll">
+      <div class="card">
+        <div class="field"><label>头像</label>
+          <div class="flex center gap12">
+            <div class="avatar" id="pf-avatar-preview" style="width:64px;height:64px;font-size:32px">${avatarHTML(p.avatar)}</div>
+            <button class="btn sec sm" data-act="avatarUpload">📷 上传照片</button>
+          </div>
+          <input type="file" id="pf-avatar-file" accept="image/*" style="display:none" />
+          <input type="hidden" id="pf-avatar" />
+          <div class="wrap mt8">${chip(emojis, 'avatar', p.avatar)}</div>
+        </div>
+        <div class="field"><label>姓名</label><input id="pf-name" type="text" maxlength="12" value="${esc(p.name)}" /></div>
+        <div class="field"><label>性别</label><div class="wrap">${chip(['男', '女'], 'gender', p.gender)}</div></div>
+        <div class="flex gap8">
+          <div class="field" style="flex:1"><label>年龄</label><input id="pf-age" type="number" min="1" max="120" value="${p.age}" /></div>
+          <div class="field" style="flex:1"><label>身高 cm</label><input id="pf-height" type="number" min="50" max="250" value="${p.height}" /></div>
+          <div class="field" style="flex:1"><label>体重 kg</label><input id="pf-weight" type="number" min="20" max="300" step="0.1" value="${p.weight}" /></div>
+        </div>
+        <div class="field"><label>主要目标</label><div class="wrap">${chip(['减脂塑形', '增肌', '健康维持', '备战马拉松'], 'goal', p.goal)}</div></div>
+        <div class="field"><label>训练水平</label><div class="wrap">${chip(['新手', '中级', '进阶'], 'level', p.level)}</div></div>
+        <div class="field"><label>可用器械</label><div class="wrap">
+          ${eq.map(e => `<span class="chip ${p.equipment.includes(e) ? 'on' : ''}" data-eq="${e}">${e}</span>`).join('')}
+        </div></div>
+      </div>
+      <div class="card">
+        <div class="card-title">📈 个人基线（影响恢复评分）</div>
+        <div class="flex gap8">
+          <div class="field" style="flex:1"><label>静息心率</label><input id="pf-rhr" type="number" value="${p.baseline.restingHR}" /></div>
+          <div class="field" style="flex:1"><label>HRV ms</label><input id="pf-hrv" type="number" value="${p.baseline.hrv}" /></div>
+        </div>
+        <div class="flex gap8">
+          <div class="field" style="flex:1"><label>睡眠评分</label><input id="pf-sleep" type="number" value="${p.baseline.sleepScore}" /></div>
+          <div class="field" style="flex:1"><label>压力</label><input id="pf-stress" type="number" value="${p.baseline.stress}" /></div>
+        </div>
+        <div class="tiny">以你的个人基线做 z-score 标准化，避免与他人横向比较。</div>
+      </div>
+      <button class="btn" data-act="saveProfile">保存资料</button>
+      <button class="btn sec mt12" data-act="resetProfile">恢复默认档案</button>
+      <div class="tiny center mt12">资料仅保存在本机浏览器 localStorage，不会上传。</div>
+    </div>`;
+  }
+
+  function doSaveProfile() {
+    const num = (id, def) => { const el = $(id); const v = el ? parseFloat(el.value) : NaN; return isNaN(v) ? def : v; };
+    const one = (attr) => document.querySelector(`[data-${attr}].on`);
+    const eq = Array.from(document.querySelectorAll('[data-eq].on')).map(c => c.dataset.eq);
+    const b = DB.profile.baseline;
+    DB.saveProfile({
+      name: (($('#pf-name') && $('#pf-name').value) || '').trim() || '运动达人',
+      avatar: ($('#pf-avatar') && $('#pf-avatar').value) || DB.profile.avatar || '🦊',
+      gender: (one('gender') && one('gender').dataset.gender) || DB.profile.gender,
+      age: Math.max(1, Math.round(num('#pf-age', DB.profile.age))),
+      height: Math.max(50, Math.round(num('#pf-height', DB.profile.height))),
+      weight: Math.max(20, num('#pf-weight', DB.profile.weight)),
+      goal: (one('goal') && one('goal').dataset.goal) || DB.profile.goal,
+      level: (one('level') && one('level').dataset.level) || DB.profile.level,
+      equipment: eq.length ? eq : DB.profile.equipment,
+      baseline: {
+        restingHR: Math.round(num('#pf-rhr', b.restingHR)),
+        hrv: Math.round(num('#pf-hrv', b.hrv)),
+        sleepScore: Math.round(num('#pf-sleep', b.sleepScore)),
+        stress: Math.round(num('#pf-stress', b.stress))
+      }
+    });
+    toast('资料已保存，已按新基线重算恢复评分');
+    go('profile');
+  }
+
+  function doResetProfile() {
+    DB.resetProfile();
+    toast('已恢复默认档案');
+    go('profile');
+  }
+
+  function triggerAvatarUpload() { const f = $('#pf-avatar-file'); if (f) f.click(); }
+
+  function setEditAvatar(url) {
+    const inp = $('#pf-avatar'); if (inp) inp.value = url;
+    const pv = $('#pf-avatar-preview'); if (pv) pv.innerHTML = avatarHTML(url);
+    document.querySelectorAll('[data-avatar]').forEach(c => c.classList.remove('on'));
+  }
+
+  function handleAvatarFile(file) {
+    if (!file || !file.type || file.type.indexOf('image') !== 0) { toast('请选择图片文件'); return; }
+    if (typeof FileReader === 'undefined') { toast('当前环境不支持图片上传'); return; }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const max = 200; // 压缩到 200px 内，避免超出 localStorage 容量
+        const k = Math.min(1, max / Math.max(img.width, img.height));
+        const w = Math.round(img.width * k), h = Math.round(img.height * k);
+        const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+        cv.getContext('2d').drawImage(img, 0, 0, w, h);
+        setEditAvatar(cv.toDataURL('image/jpeg', 0.85));
+      };
+      img.onerror = () => toast('图片读取失败，请换一张');
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
   }
 
   // 隐私合规
@@ -744,6 +869,22 @@
     });
     document.querySelectorAll('[data-eq]').forEach(c => c.onclick = () => c.classList.toggle('on'));
     document.querySelectorAll('[data-food]').forEach(c => c.onclick = () => { toast('已添加 ' + c.dataset.food); });
+    // 编辑资料页：单选 chips（性别 / 训练水平 / 头像 emoji）
+    ['gender', 'level', 'avatar'].forEach(attr => {
+      document.querySelectorAll(`[data-${attr}]`).forEach(c => c.onclick = () => {
+        document.querySelectorAll(`[data-${attr}]`).forEach(x => x.classList.remove('on'));
+        c.classList.add('on');
+        if (attr === 'avatar') {
+          const inp = $('#pf-avatar'); if (inp) inp.value = c.dataset.avatar;
+          const pv = $('#pf-avatar-preview'); if (pv) pv.innerHTML = avatarHTML(c.dataset.avatar);
+        }
+      });
+    });
+    // 头像照片上传 + 隐藏域初始化
+    const avFile = $('#pf-avatar-file');
+    if (avFile) avFile.onchange = (e) => handleAvatarFile(e.target.files && e.target.files[0]);
+    const avHidden = $('#pf-avatar');
+    if (avHidden) avHidden.value = DB.profile.avatar;
   }
 
   // ---------------- 启动 ----------------
