@@ -5,13 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#2ECC8F" />
   <title>运动健康助手</title>
-  <link rel="stylesheet" href="assets/css/style.css?v=4" />
+  <link rel="stylesheet" href="assets/css/style.css?v=6" />
 </head>
 <body>
   <div class="phone">
     <!-- 状态栏 -->
     <div class="statusbar">
-      <span>9:41</span>
+      <span id="status-time">9:41</span>
       <span class="dots">📶 🔋</span>
     </div>
 
@@ -30,10 +30,43 @@
     <!-- 弹层 -->
     <div class="sheet-mask" id="sheet-mask"></div>
     <div class="sheet" id="sheet"></div>
+
+    <!-- 登录/注册遮罩 -->
+    <div id="auth" class="auth-overlay">
+      <div class="auth-card">
+        <div class="auth-logo">🏃</div>
+        <h2 class="auth-title">运动健康助手</h2>
+        <div class="auth-seg">
+          <button type="button" id="auth-tab-login" class="auth-tab on">登录</button>
+          <button type="button" id="auth-tab-register" class="auth-tab">注册</button>
+        </div>
+        <form id="auth-form" autocomplete="off" novalidate>
+          <div class="auth-field">
+            <label>账号</label>
+            <input id="auth-user" type="text" placeholder="请输入账号" />
+          </div>
+          <div class="auth-field">
+            <label>密码</label>
+            <div class="auth-pwd">
+              <input id="auth-pass" type="password" placeholder="请输入密码" />
+              <button type="button" id="auth-toggle" class="auth-eye" title="显示/隐藏密码">👁</button>
+            </div>
+          </div>
+          <div class="auth-field" id="auth-confirm-wrap" style="display:none">
+            <label>确认密码</label>
+            <input id="auth-confirm" type="password" placeholder="请再次输入密码" />
+          </div>
+          <div class="auth-msg" id="auth-msg"></div>
+          <button type="submit" class="auth-submit" id="auth-submit">登录</button>
+        </form>
+        <div class="auth-note">演示版：账号仅保存在本机浏览器 localStorage，未加密，请勿使用真实密码。</div>
+      </div>
+    </div>
   </div>
 
-  <script src="assets/js/data.js?v=4"></script>
-  <script src="assets/js/charts.js?v=4"></script>
-  <script src="assets/js/app.js?v=4"></script>
+  <script src="assets/js/data.js?v=6"></script>
+  <script src="assets/js/charts.js?v=6"></script>
+  <script src="assets/js/app.js?v=6"></script>
+  <script src="assets/js/auth.js?v=6"></script>
 </body>
 </html>

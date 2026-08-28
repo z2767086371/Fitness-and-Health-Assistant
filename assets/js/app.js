@@ -87,6 +87,7 @@
       case 'obSubmit': submitOnboard(); break;
       case 'editProfile': go('profile', 'edit'); break;
       case 'level': go('profile', 'level'); break;
+      case 'logout': if (window.Auth && window.Auth.logout) window.Auth.logout(); break;
       case 'saveProfile': doSaveProfile(); break;
       case 'resetProfile': doResetProfile(); break;
       case 'avatarUpload': triggerAvatarUpload(); break;
@@ -610,6 +611,7 @@
         <div class="row" data-act="alg"><div class="ri">🧠</div><div class="rt"><div class="t">算法透明度</div><div class="s">查看建议背后的逻辑</div></div><span class="pill">合规</span></div>
         <div class="row" data-act="privacy"><div class="ri">🔒</div><div class="rt"><div class="t">隐私与数据权利</div><div class="s">GDPR / 个人信息保护法</div></div><span class="pill">合规</span></div>
         <div class="row" data-act="nav:insight"><div class="ri">📊</div><div class="rt"><div class="t">数据与设备</div><div class="s">健康/运动设备同步</div></div><span class="pill">连接</span></div>
+        <div class="row" data-act="logout"><div class="ri">🚪</div><div class="rt"><div class="t">退出登录</div><div class="s">${window.Auth && window.Auth.currentUser() ? '当前账号：' + esc(window.Auth.currentUser()) : '返回登录界面'}</div></div><span class="pill">退出</span></div>
       </div>
 
       <div class="card">
@@ -1097,6 +1099,18 @@
     const avHidden = $('#pf-avatar');
     if (avHidden) avHidden.value = DB.profile.avatar;
   }
+
+  // ---------------- 状态栏时钟：与系统时间同步 ----------------
+  function updateClock() {
+    const el = $('#status-time');
+    if (!el) return;
+    const d = new Date();
+    const hh = d.getHours();
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    el.textContent = hh + ':' + mm;
+  }
+  setInterval(updateClock, 1000);
+  updateClock();
 
   // ---------------- 启动 ----------------
   document.addEventListener('DOMContentLoaded', () => { render(); });

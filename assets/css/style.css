@@ -265,3 +265,43 @@ img { max-width: 100%; }
 .chip.on{background:var(--grad);color:#fff}
 .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--text-2)}
 .legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;vertical-align:middle}
+
+/* ---------- 登录/注册遮罩 ---------- */
+.auth-overlay {
+  position: absolute; inset: 0; z-index: 300;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg); padding: 20px;
+}
+.auth-overlay.hidden { display: none; }
+.auth-card {
+  width: 100%; max-width: 360px; background: var(--card);
+  border-radius: var(--radius-lg); padding: 28px 24px; box-shadow: var(--shadow-lg);
+  text-align: center;
+}
+.auth-logo { font-size: 46px; line-height: 1; }
+.auth-title { font-size: 20px; font-weight: 800; margin: 8px 0 18px; }
+.auth-seg { display: flex; background: var(--bg); border-radius: var(--radius-pill); padding: 4px; margin-bottom: 18px; }
+.auth-tab { flex: 1; padding: 9px; border-radius: var(--radius-pill); font-size: 14px; font-weight: 700; color: var(--text-2); }
+.auth-tab.on { background: #fff; color: var(--text); box-shadow: var(--shadow); }
+.auth-field { text-align: left; margin-bottom: 14px; }
+.auth-field label { font-size: 13px; font-weight: 600; color: var(--text-2); display: block; margin-bottom: 6px; }
+.auth-field input {
+  width: 100%; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px;
+  font-size: 15px; background: var(--card); color: var(--text); outline: none;
+}
+.auth-field input:focus { border-color: var(--primary); }
+.auth-pwd { position: relative; }
+.auth-pwd input { padding-right: 46px; }
+.auth-eye {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  width: 36px; height: 36px; border-radius: 8px; font-size: 17px; line-height: 1;
+  display: flex; align-items: center; justify-content: center; background: var(--bg); color: var(--text-2);
+}
+.auth-msg { font-size: 12px; color: var(--danger); min-height: 16px; text-align: left; margin-bottom: 6px; }
+.auth-submit {
+  display: block; width: 100%; padding: 14px; border-radius: var(--radius-pill);
+  font-size: 16px; font-weight: 800; color: #fff; background: var(--grad);
+  box-shadow: 0 8px 20px rgba(46,204,143,.35); transition: transform .12s;
+}
+.auth-submit:active { transform: scale(.98); }
+.auth-note { font-size: 11px; color: var(--text-3); margin-top: 14px; line-height: 1.5; }
